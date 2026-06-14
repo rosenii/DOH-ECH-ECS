@@ -14,8 +14,10 @@ const UPSTREAM_JSON_ALI = 'https://dns.alidns.com/resolve';
 
 const CF_STATIC_DOMAINS = [
     "twimg.com", "twitter.com", "x.com", "t.co",
-    "cloudflare-dns.com", "pages.dev", "workers.dev", "cloudflare.com", "lss1.ccwu.cc"
+    "cloudflare-dns.com", "pages.dev", "workers.dev", "cloudflare.com"
 ];
+const IPV4_ONLY_DOMAINS = ["twitter.com", "x.com", "t.co", "twimg.com"];
+
 const DEFAULT_CF_IP = "104.18.10.118";
 const DEFAULT_CF_IP6 = "2606:4700::6812:a76";
 
@@ -24,9 +26,6 @@ const META_DOMAINS = [
     "whatsapp.com", "fb.com", "meta.com"
 ];
 const DEFAULT_META_IP = "157.240.1.35";
-
-const IPV4_ONLY_DOMAINS = ["twitter.com", "x.com", "t.co", "twimg.com"];
-
 const META_ECH_CONFIG = "AEj+DQBEAQAgACAdd+scUi0IYFsXnUIU7ko2Nd9+F8M26pAGZVpz/KrWPgAEAAEAAWQVZWNoLXB1YmxpYy5hdG1ldGEuY29tAAA=";
 //   CIDR 列表
 const RAW_META_CIDRS = [
