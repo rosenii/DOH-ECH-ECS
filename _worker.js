@@ -238,8 +238,10 @@ async function resolveDNS(domain, type, config, clientIP) {
         if (type === 'AAAA') {
             if (isDomainIpv4Only(domain)) return { domain, type, answers: [], ech: null };
             if (effectiveMeta) {
+                // Meta：仅使用 metaIp6
                 return { domain, type, answers: config.metaIp6 ? parseIpList(config.metaIp6) : [], ech: null };
             }
+            // Cloudflare：ip6 > cfDomain(28) > DEFAULT_CF_IP6
             let ipList = [];
             if (config.ip6) ipList = parseIpList(config.ip6);
             else if (config.cfDomain) {
@@ -250,6 +252,7 @@ async function resolveDNS(domain, type, config, clientIP) {
         }
         if (type === 'HTTPS') {
             if (effectiveCF) {
+                // Cloudflare ECH + hints
                 if (config.ip4) ipv4Hints = parseIpList(config.ip4);
                 else if (config.cfDomain) {
                     const resolved = await resolveMultiDomainToIps(config.cfDomain, 1, clientIP);
@@ -280,19 +283,21 @@ async function resolveDNS(domain, type, config, clientIP) {
         // A 记录
         let ipList = [];
         if (effectiveCF) {
+            // Cloudflare：ip4 > cfDomain(1) > DEFAULT_CF_IP
             if (config.ip4) ipList = parseIpList(config.ip4);
             else if (config.cfDomain) {
                 const resolved = await resolveMultiDomainToIps(config.cfDomain, 1, clientIP);
                 if (resolved.length > 0) ipList = resolved.map(bytesToIp);
             } else ipList = [DEFAULT_CF_IP];
         } else {
+            // Meta：metaIp4 > DEFAULT_META_IP
             if (config.metaIp4) ipList = parseIpList(config.metaIp4);
             else ipList = [DEFAULT_META_IP];
         }
         return { domain, type, answers: ipList, ech: null };
     }
 
-    // ===== 非静态域名 =====
+    // ===== 非静态域名（绝不进行任何自定义 IP 替换） =====
     const dnsType = type === 'HTTPS' ? 65 : (type === 'AAAA' ? 28 : 1);
     const upstreamData = await queryUpstreamDNS(domain, dnsType, clientIP);
     if (!upstreamData) return { domain, type, error: '上游查询失败' };
@@ -309,7 +314,7 @@ async function resolveDNS(domain, type, config, clientIP) {
         }
     }
 
-    // 归属探测（用于补充 ECH 和 hints）
+    // 归属探测（用于补充 ECH 和 hints，不参与替换）
     const probe = await activeProbeOwner(domain, null, clientIP);
     const owner = probe ? probe.owner : null;
 
@@ -334,21 +339,7 @@ async function resolveDNS(domain, type, config, clientIP) {
         ipv6Hints = [...new Set(ipv6Hints)].slice(0, 6);
     }
 
-    // 用户自定义 IP 替换（仅对 A/AAAA，受 best 控制）
-    const allowReplace = best;
-    if (type === 'A' && config.ip4 && allowReplace) {
-        answers = parseIpList(config.ip4);
-    } else if (type === 'AAAA' && config.ip6 && allowReplace && !isDomainIpv4Only(domain)) {
-        answers = parseIpList(config.ip6);
-    } else if ((type === 'A' || type === 'AAAA') && config.cfDomain && allowReplace && (owner === 'CF' || best)) {
-        const targetType = type === 'A' ? 1 : 28;
-        const resolved = await resolveMultiDomainToIps(config.cfDomain, targetType, clientIP);
-        if (resolved.length > 0) answers = resolved.map(ip => type === 'A' ? bytesToIp(ip) : formatIPv6FromBytes(ip));
-    } else if ((type === 'A' || type === 'AAAA') && owner === 'META') {
-        if (type === 'A' && config.metaIp4 && allowReplace) answers = parseIpList(config.metaIp4);
-        else if (type === 'AAAA' && config.metaIp6 && allowReplace) answers = parseIpList(config.metaIp6);
-    }
-
+    // 非静态域名不做任何自定义替换，直接返回原始解析结果
     const result = { domain, type, answers: answers || [] };
     result.ech = ech || null;
     if (type === 'HTTPS') {
