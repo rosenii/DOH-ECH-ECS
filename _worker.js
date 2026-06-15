@@ -41,7 +41,7 @@ const RAW_CF_CIDRS = [
 
 const cacheMap = new Map();
 const CACHE_TTL = 3600 * 1000;        // 归属缓存 1 小时
-const ECH_CACHE_TTL = 1200 * 1000;     // ECH 缓存 20 分钟
+const ECH_CACHE_TTL = 1800 * 1000;     // ECH 缓存 30 分钟
 
 let compiledMeta = null, compiledCF = null;
 function getCompiledMeta() { if (!compiledMeta) compiledMeta = compileCidrs(RAW_META_CIDRS); return compiledMeta; }
@@ -51,8 +51,8 @@ function getCompiledCF()   { if (!compiledCF)   compiledCF   = compileCidrs(RAW_
 export default {
     async fetch(req, env, ctx) {
         const url = new URL(req.url);
-        const clientIP = url.searchParams.get('clientIp')
-            || req.headers.get('X-Client-IP')
+        const clientIP = url.searchParams.get('clientip')
+            || req.headers.get('X-ClientIP')
             || req.headers.get('CF-Connecting-IP')
             || '';
         if (url.pathname === '/api/query') return handleApiQuery(url, clientIP);
