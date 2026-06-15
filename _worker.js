@@ -63,6 +63,7 @@ async function handleDoHRequest(req, injectEch, ctx, clientIP) {
         metaIp4:  url.searchParams.get('metaIp4') || req.headers.get('X-MetaIp4') || '',
         metaIp6:  url.searchParams.get('metaIp6') || req.headers.get('X-MetaIp6') || '',
         cfDomain: url.searchParams.get('cf')      || req.headers.get('X-CF')      || '',
+        metaDomain: url.searchParams.get('meta') || req.headers.get('X-Meta') || '',
         echDomain:url.searchParams.get('ech')    || req.headers.get('X-ECH')     || 'cloudflare-ech.com',
         best:     url.searchParams.get('best')    || req.headers.get('X-Best')    || 'false'
     };
@@ -208,15 +209,12 @@ async function resolveDNS(domain, type, config, clientIP) {
     domain = domain.toLowerCase().replace(/\.$/, '');
     const best = config.best === 'true';
 
-    // 原始静态域名标志
     const origStaticCF = CF_STATIC_DOMAINS.some(d => domain === d || domain.endsWith("." + d));
     const origStaticMeta = META_DOMAINS.some(d => domain === d || domain.endsWith("." + d));
 
-    // 有效的静态标志（跟随优选时可能将 CIDR 确认的域名视为静态）
     let effectiveCF = origStaticCF;
     let effectiveMeta = origStaticMeta;
 
-    // 如果 best=true 且不在原始静态列表中，尝试 CIDR 探测
     if (!origStaticCF && !origStaticMeta && best) {
         const probe = await activeProbeOwner(domain, null, clientIP);
         if (probe) {
@@ -232,15 +230,21 @@ async function resolveDNS(domain, type, config, clientIP) {
     let ipv4Hints = [];
     let ipv6Hints = [];
 
-    // ===== 静态域名处理（使用 effectiveCF / effectiveMeta） =====
+    // ===== 静态域名处理 =====
     if (isStatic) {
         if (type === 'AAAA') {
             if (isDomainIpv4Only(domain)) return { domain, type, answers: [], ech: null };
             if (effectiveMeta) {
-                // Meta：仅使用 metaIp6
-                return { domain, type, answers: config.metaIp6 ? parseIpList(config.metaIp6) : [], ech: null };
+                // Meta AAAA：metaIp6 > metaDomain(28) > 无默认
+                let ipList = [];
+                if (config.metaIp6) ipList = parseIpList(config.metaIp6);
+                else if (config.metaDomain) {
+                    const resolved = await resolveMultiDomainToIps(config.metaDomain, 28, clientIP);
+                    if (resolved.length > 0) ipList = resolved.map(formatIPv6FromBytes);
+                }
+                return { domain, type, answers: ipList, ech: null };
             }
-            // Cloudflare：ip6 > cfDomain(28) > DEFAULT_CF_IP6
+            // Cloudflare AAAA
             let ipList = [];
             if (config.ip6) ipList = parseIpList(config.ip6);
             else if (config.cfDomain) {
@@ -249,9 +253,10 @@ async function resolveDNS(domain, type, config, clientIP) {
             } else ipList = parseIpList(DEFAULT_CF_IP6);
             return { domain, type, answers: ipList, ech: null };
         }
+
         if (type === 'HTTPS') {
             if (effectiveCF) {
-                // Cloudflare ECH + hints
+                // Cloudflare hints
                 if (config.ip4) ipv4Hints = parseIpList(config.ip4);
                 else if (config.cfDomain) {
                     const resolved = await resolveMultiDomainToIps(config.cfDomain, 1, clientIP);
@@ -265,10 +270,17 @@ async function resolveDNS(domain, type, config, clientIP) {
                     } else ipv6Hints = parseIpList(DEFAULT_CF_IP6);
                 }
                 ech = await fetchRealEch(config.echDomain || 'cloudflare-ech.com', clientIP);
-            } else { // Meta
+            } else { // Meta hints
                 if (config.metaIp4) ipv4Hints = parseIpList(config.metaIp4);
-                else ipv4Hints = [DEFAULT_META_IP];
+                else if (config.metaDomain) {
+                    const resolved = await resolveMultiDomainToIps(config.metaDomain, 1, clientIP);
+                    if (resolved.length > 0) ipv4Hints = resolved.map(bytesToIp);
+                } else ipv4Hints = [DEFAULT_META_IP];
                 if (config.metaIp6) ipv6Hints = parseIpList(config.metaIp6);
+                else if (config.metaDomain) {
+                    const resolved = await resolveMultiDomainToIps(config.metaDomain, 28, clientIP);
+                    if (resolved.length > 0) ipv6Hints = resolved.map(formatIPv6FromBytes);
+                }
                 ech = META_ECH_CONFIG;
             }
             ipv4Hints = [...new Set(ipv4Hints)].slice(0, 6);
@@ -279,24 +291,26 @@ async function resolveDNS(domain, type, config, clientIP) {
             if (ipv6Hints.length) result.ipv6hints = ipv6Hints;
             return result;
         }
+
         // A 记录
         let ipList = [];
         if (effectiveCF) {
-            // Cloudflare：ip4 > cfDomain(1) > DEFAULT_CF_IP
             if (config.ip4) ipList = parseIpList(config.ip4);
             else if (config.cfDomain) {
                 const resolved = await resolveMultiDomainToIps(config.cfDomain, 1, clientIP);
                 if (resolved.length > 0) ipList = resolved.map(bytesToIp);
             } else ipList = [DEFAULT_CF_IP];
-        } else {
-            // Meta：metaIp4 > DEFAULT_META_IP
+        } else { // Meta A
             if (config.metaIp4) ipList = parseIpList(config.metaIp4);
-            else ipList = [DEFAULT_META_IP];
+            else if (config.metaDomain) {
+                const resolved = await resolveMultiDomainToIps(config.metaDomain, 1, clientIP);
+                if (resolved.length > 0) ipList = resolved.map(bytesToIp);
+            } else ipList = [DEFAULT_META_IP];
         }
         return { domain, type, answers: ipList, ech: null };
     }
 
-    // ===== 非静态域名（绝不进行任何自定义 IP 替换） =====
+    // ===== 非静态域名 =====
     const dnsType = type === 'HTTPS' ? 65 : (type === 'AAAA' ? 28 : 1);
     const upstreamData = await queryUpstreamDNS(domain, dnsType, clientIP);
     if (!upstreamData) return { domain, type, error: '上游查询失败' };
@@ -313,7 +327,6 @@ async function resolveDNS(domain, type, config, clientIP) {
         }
     }
 
-    // 归属探测（用于补充 ECH 和 hints，不参与替换）
     const probe = await activeProbeOwner(domain, null, clientIP);
     const owner = probe ? probe.owner : null;
 
@@ -322,7 +335,6 @@ async function resolveDNS(domain, type, config, clientIP) {
         else if (owner === 'CF') ech = await fetchRealEch(config.echDomain || 'cloudflare-ech.com', clientIP);
     }
 
-    // 收集 hints（归属明确时）
     if (type === 'HTTPS' && (owner === 'CF' || owner === 'META')) {
         const [aData, aaaaData] = await Promise.all([
             queryUpstreamDNS(domain, 1, clientIP).catch(() => null),
@@ -338,7 +350,6 @@ async function resolveDNS(domain, type, config, clientIP) {
         ipv6Hints = [...new Set(ipv6Hints)].slice(0, 6);
     }
 
-    // 非静态域名不做任何自定义替换，直接返回原始解析结果
     const result = { domain, type, answers: answers || [] };
     result.ech = ech || null;
     if (type === 'HTTPS') {
@@ -512,8 +523,15 @@ async function fetchCleanEchRdataWithHints(config, domain, ctx, clientIP) {
 async function packMetaEchWithHints(domain, config, clientIP) {
     let ipv4Hints = [], ipv6Hints = [];
     if (config.metaIp4) ipv4Hints = parseIpList(config.metaIp4);
-    else ipv4Hints = [DEFAULT_META_IP];
+    else if (config.metaDomain) {
+        const resolved = await resolveMultiDomainToIps(config.metaDomain, 1, clientIP);
+        if (resolved.length > 0) ipv4Hints = resolved.map(bytesToIp);
+    } else ipv4Hints = [DEFAULT_META_IP];
     if (config.metaIp6) ipv6Hints = parseIpList(config.metaIp6);
+    else if (config.metaDomain) {
+        const resolved = await resolveMultiDomainToIps(config.metaDomain, 28, clientIP);
+        if (resolved.length > 0) ipv6Hints = resolved.map(formatIPv6FromBytes);
+    }
     return packHttpsParamsWithHints(1, ".", [
         { key: 'alpn', val: 'h2,h3' },
         { key: 'ech', val: META_ECH_CONFIG }
