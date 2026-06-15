@@ -856,7 +856,7 @@ function getHtml() {
         }
         .subtitle { 
             color: var(--text-secondary); 
-            font-size: 0.85rem; 
+            font-size: 0.75rem; 
             margin-bottom: 2rem;
             margin-left: 52px;
         }
@@ -1051,7 +1051,7 @@ function getHtml() {
 </div>
 <div class="global-section">
     <label for="clientIp">自定义 Client IP (ECS) <span style="font-weight:normal;font-size:0.8em;">留空自动获取</span></label>
-    <input type="text" id="clientIp" placeholder="8.8.8.8 或 IPv6" style="margin-bottom:0">
+    <input type="text" id="clientIp" placeholder="1.2.4.0/24 或 ::/56" style="margin-bottom:0">
 </div>
 <button id="queryBtn" onclick="doQuery()">
             <span id="btnText">🔍 开始查询</span>
